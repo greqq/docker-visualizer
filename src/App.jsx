@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Monitor, Box, Layers, HardDrive, Cpu, Info, Server, Plus, X, Play, Square, Trash2, Network, Database, Settings, Link2, Unlink } from 'lucide-react';
+import { Monitor, Box, Layers, HardDrive, Cpu, Info, Server, Plus, X, Play, Square, Trash2, Network, Database, Settings, Link2, Unlink, Zap, RotateCcw } from 'lucide-react';
 
 export default function DockerVisualizer() {
   // Images state
@@ -22,6 +22,9 @@ export default function DockerVisualizer() {
     { id: 2, name: 'host', driver: 'host', isDefault: true, containers: [] },
     { id: 3, name: 'none', driver: 'null', isDefault: true, containers: [] },
   ]);
+
+  // Active scenario tracking
+  const [activeScenario, setActiveScenario] = useState(null);
 
   // Modal states
   const [showAddImageModal, setShowAddImageModal] = useState(false);
@@ -234,6 +237,141 @@ export default function DockerVisualizer() {
     setNetworks(networks.filter(n => n.id !== id));
   };
 
+  // ============ SCENARIOS ============
+  const scenarios = [
+    {
+      id: 'hello-world',
+      name: '🌍 Hello World',
+      description: 'Single nginx container serving a webpage',
+      difficulty: 'Beginner',
+      images: [{ name: 'nginx', tag: 'latest', size: '142 MB', layers: 7 }],
+      containers: [
+        { name: 'hello-nginx', image: 'nginx:latest', status: 'running', ports: '8080:80', network: 'bridge', envVars: [], volumes: [] }
+      ],
+      volumes: [],
+      networks: [],
+    },
+    {
+      id: 'web-db',
+      name: '🗄️ Web + Database',
+      description: 'Web server with PostgreSQL database on custom network',
+      difficulty: 'Intermediate',
+      images: [
+        { name: 'nginx', tag: 'latest', size: '142 MB', layers: 7 },
+        { name: 'postgres', tag: '15', size: '379 MB', layers: 13 }
+      ],
+      containers: [
+        { name: 'web-server', image: 'nginx:latest', status: 'running', ports: '8080:80', network: 'app-network', envVars: [], volumes: [] },
+        { name: 'database', image: 'postgres:15', status: 'running', ports: '5432:5432', network: 'app-network', envVars: [{ key: 'POSTGRES_PASSWORD', value: 'secret' }], volumes: ['db-data'] }
+      ],
+      volumes: [{ name: 'db-data', driver: 'local', size: '0 MB' }],
+      networks: [{ name: 'app-network', driver: 'bridge' }],
+    },
+    {
+      id: 'full-stack',
+      name: '🚀 Full Stack App',
+      description: 'Frontend + API + Database + Cache with volumes',
+      difficulty: 'Advanced',
+      images: [
+        { name: 'nginx', tag: 'latest', size: '142 MB', layers: 7 },
+        { name: 'node', tag: '18-alpine', size: '175 MB', layers: 5 },
+        { name: 'postgres', tag: '15', size: '379 MB', layers: 13 },
+        { name: 'redis', tag: 'alpine', size: '30 MB', layers: 5 }
+      ],
+      containers: [
+        { name: 'frontend', image: 'nginx:latest', status: 'running', ports: '3000:80', network: 'fullstack-net', envVars: [], volumes: [] },
+        { name: 'api', image: 'node:18-alpine', status: 'running', ports: '4000:4000', network: 'fullstack-net', envVars: [{ key: 'DB_HOST', value: 'postgres' }, { key: 'REDIS_HOST', value: 'cache' }], volumes: ['api-logs'] },
+        { name: 'postgres', image: 'postgres:15', status: 'running', ports: null, network: 'fullstack-net', envVars: [{ key: 'POSTGRES_PASSWORD', value: 'secret' }, { key: 'POSTGRES_DB', value: 'myapp' }], volumes: ['pg-data'] },
+        { name: 'cache', image: 'redis:alpine', status: 'running', ports: null, network: 'fullstack-net', envVars: [], volumes: [] }
+      ],
+      volumes: [
+        { name: 'pg-data', driver: 'local', size: '0 MB' },
+        { name: 'api-logs', driver: 'local', size: '0 MB' }
+      ],
+      networks: [{ name: 'fullstack-net', driver: 'bridge' }],
+    },
+    {
+      id: 'microservices',
+      name: '🔗 Microservices',
+      description: 'Multiple services communicating over networks',
+      difficulty: 'Advanced',
+      images: [
+        { name: 'nginx', tag: 'latest', size: '142 MB', layers: 7 },
+        { name: 'node', tag: '18-alpine', size: '175 MB', layers: 5 },
+        { name: 'python', tag: '3.11-slim', size: '125 MB', layers: 5 },
+        { name: 'mongo', tag: 'latest', size: '695 MB', layers: 10 }
+      ],
+      containers: [
+        { name: 'gateway', image: 'nginx:latest', status: 'running', ports: '80:80', network: 'frontend-net', envVars: [], volumes: [] },
+        { name: 'user-service', image: 'node:18-alpine', status: 'running', ports: null, network: 'backend-net', envVars: [{ key: 'MONGO_URL', value: 'mongodb://users-db:27017' }], volumes: [] },
+        { name: 'order-service', image: 'python:3.11-slim', status: 'running', ports: null, network: 'backend-net', envVars: [{ key: 'MONGO_URL', value: 'mongodb://orders-db:27017' }], volumes: [] },
+        { name: 'users-db', image: 'mongo:latest', status: 'running', ports: null, network: 'backend-net', envVars: [], volumes: ['users-data'] },
+        { name: 'orders-db', image: 'mongo:latest', status: 'running', ports: null, network: 'backend-net', envVars: [], volumes: ['orders-data'] }
+      ],
+      volumes: [
+        { name: 'users-data', driver: 'local', size: '0 MB' },
+        { name: 'orders-data', driver: 'local', size: '0 MB' }
+      ],
+      networks: [
+        { name: 'frontend-net', driver: 'bridge' },
+        { name: 'backend-net', driver: 'bridge' }
+      ],
+    }
+  ];
+
+  const loadScenario = (scenario) => {
+    // Reset to default networks first
+    const defaultNetworks = [
+      { id: 1, name: 'bridge', driver: 'bridge', isDefault: true, containers: [] },
+      { id: 2, name: 'host', driver: 'host', isDefault: true, containers: [] },
+      { id: 3, name: 'none', driver: 'null', isDefault: true, containers: [] },
+    ];
+    
+    // Add scenario networks
+    const scenarioNetworks = scenario.networks.map((n, i) => ({
+      ...n,
+      id: Date.now() + i,
+      isDefault: false,
+      containers: []
+    }));
+    
+    // Set images
+    const scenarioImages = scenario.images.map((img, i) => ({ ...img, id: Date.now() + i + 100 }));
+    
+    // Set volumes
+    const scenarioVolumes = scenario.volumes.map((v, i) => ({ ...v, id: Date.now() + i + 200 }));
+    
+    // Create containers with proper network tracking
+    const allNetworks = [...defaultNetworks, ...scenarioNetworks];
+    const scenarioContainers = scenario.containers.map((c, i) => {
+      const containerId = Date.now() + i + 300;
+      // Update network's container list
+      const networkIdx = allNetworks.findIndex(n => n.name === c.network);
+      if (networkIdx >= 0) {
+        allNetworks[networkIdx].containers.push(containerId);
+      }
+      return { ...c, id: containerId };
+    });
+    
+    setImages(scenarioImages);
+    setContainers(scenarioContainers);
+    setVolumes(scenarioVolumes);
+    setNetworks(allNetworks);
+    setActiveScenario(scenario.id);
+  };
+
+  const resetAll = () => {
+    setImages([]);
+    setContainers([]);
+    setVolumes([]);
+    setNetworks([
+      { id: 1, name: 'bridge', driver: 'bridge', isDefault: true, containers: [] },
+      { id: 2, name: 'host', driver: 'host', isDefault: true, containers: [] },
+      { id: 3, name: 'none', driver: 'null', isDefault: true, containers: [] },
+    ]);
+    setActiveScenario(null);
+  };
+
   // Stats
   const stats = {
     images: images.length,
@@ -375,6 +513,61 @@ export default function DockerVisualizer() {
           <div className="bg-slate-800/50 px-4 py-2 rounded-lg border border-slate-700">
             <span className="text-indigo-400 font-semibold">{stats.networks}</span>
             <span className="text-slate-400 ml-2 text-sm">Networks</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Scenarios Section */}
+      <div className="max-w-6xl mx-auto mb-6">
+        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-yellow-400" />
+              <span className="font-semibold text-slate-200">Quick Scenarios</span>
+              <span className="text-xs text-slate-500">Load pre-built examples to learn</span>
+            </div>
+            {activeScenario && (
+              <button
+                onClick={resetAll}
+                className="flex items-center gap-1 text-xs text-slate-400 hover:text-red-400 transition-colors"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Reset All
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {scenarios.map(scenario => (
+              <button
+                key={scenario.id}
+                onClick={() => loadScenario(scenario)}
+                className={`text-left p-3 rounded-lg border transition-all ${
+                  activeScenario === scenario.id
+                    ? 'bg-yellow-500/20 border-yellow-500/50 ring-2 ring-yellow-500/30'
+                    : 'bg-slate-700/50 border-slate-600 hover:border-yellow-500/30 hover:bg-slate-700'
+                }`}
+              >
+                <div className="font-medium text-sm">{scenario.name}</div>
+                <div className="text-xs text-slate-400 mt-1">{scenario.description}</div>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${
+                    scenario.difficulty === 'Beginner' ? 'bg-green-500/20 text-green-400' :
+                    scenario.difficulty === 'Intermediate' ? 'bg-yellow-500/20 text-yellow-400' :
+                    'bg-red-500/20 text-red-400'
+                  }`}>
+                    {scenario.difficulty}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {scenario.containers.length} containers
+                  </span>
+                </div>
+                {activeScenario === scenario.id && (
+                  <div className="text-xs text-yellow-400 mt-2 flex items-center gap-1">
+                    <Zap className="w-3 h-3" /> Active
+                  </div>
+                )}
+              </button>
+            ))}
           </div>
         </div>
       </div>
