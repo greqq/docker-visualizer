@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Monitor, Box, Layers, HardDrive, Cpu, Info, Server, Plus, X, Play, Square, Trash2, Network, Database, Settings, Link2, Unlink, Zap, RotateCcw } from 'lucide-react';
+import { Monitor, Box, Layers, HardDrive, Cpu, Info, Server, Plus, X, Play, Square, Trash2, Network, Database, Settings, Link2, Unlink, Zap, RotateCcw, Terminal, ChevronUp, ChevronDown, Copy, Check } from 'lucide-react';
 
 export default function DockerVisualizer() {
   // Images state
@@ -25,6 +25,11 @@ export default function DockerVisualizer() {
 
   // Active scenario tracking
   const [activeScenario, setActiveScenario] = useState(null);
+
+  // CLI Commands state
+  const [commandHistory, setCommandHistory] = useState([]);
+  const [showCliPanel, setShowCliPanel] = useState(true);
+  const [copiedIndex, setCopiedIndex] = useState(null);
 
   // Modal states
   const [showAddImageModal, setShowAddImageModal] = useState(false);
@@ -90,11 +95,27 @@ export default function DockerVisualizer() {
     );
   };
 
+  // ============ CLI COMMAND HELPERS ============
+  const recordCommand = (cmd) => {
+    setCommandHistory(prev => [...prev, { cmd, timestamp: new Date().toLocaleTimeString() }].slice(-20));
+  };
+
+  const copyCommand = (cmd, index) => {
+    navigator.clipboard.writeText(cmd);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 1500);
+  };
+
+  const clearHistory = () => {
+    setCommandHistory([]);
+  };
+
   // ============ IMAGE HANDLERS ============
   const addImage = (image) => {
     const exists = images.find(i => i.name === image.name && i.tag === image.tag);
     if (!exists) {
       setImages([...images, { ...image, id: Date.now() }]);
+      recordCommand(`docker pull ${image.name}:${image.tag}`);
     }
     setShowAddImageModal(false);
     setNewImage({ name: '', tag: 'latest' });
@@ -108,6 +129,7 @@ export default function DockerVisualizer() {
       return;
     }
     setImages(images.filter(i => i.id !== id));
+    recordCommand(`docker rmi ${image.name}:${image.tag}`);
   };
 
   // ============ CONTAINER HANDLERS ============
@@ -133,9 +155,10 @@ export default function DockerVisualizer() {
   const createContainer = () => {
     if (!selectedImageForRun) return;
     
+    const containerName = newContainer.name || `${selectedImageForRun.name}-${Math.random().toString(36).substr(2, 4)}`;
     const container = {
       id: Date.now(),
-      name: newContainer.name || `${selectedImageForRun.name}-${Math.random().toString(36).substr(2, 4)}`,
+      name: containerName,
       image: `${selectedImageForRun.name}:${selectedImageForRun.tag}`,
       status: 'running',
       ports: newContainer.ports || null,
@@ -153,14 +176,30 @@ export default function DockerVisualizer() {
         : n
     ));
     
+    // Build docker run command
+    let cmd = `docker run -d --name ${containerName}`;
+    if (newContainer.ports) cmd += ` -p ${newContainer.ports}`;
+    if (newContainer.network !== 'bridge') cmd += ` --network ${newContainer.network}`;
+    newContainer.envVars.filter(e => e.key).forEach(e => {
+      cmd += ` -e ${e.key}=${e.value}`;
+    });
+    newContainer.volumes.forEach(v => {
+      cmd += ` -v ${v}:/data`;
+    });
+    cmd += ` ${selectedImageForRun.name}:${selectedImageForRun.tag}`;
+    recordCommand(cmd);
+    
     setShowRunContainerModal(false);
     setSelectedImageForRun(null);
   };
 
   const toggleContainer = (id) => {
+    const container = containers.find(c => c.id === id);
+    const newStatus = container.status === 'running' ? 'stopped' : 'running';
     setContainers(containers.map(c => 
-      c.id === id ? { ...c, status: c.status === 'running' ? 'stopped' : 'running' } : c
+      c.id === id ? { ...c, status: newStatus } : c
     ));
+    recordCommand(newStatus === 'running' ? `docker start ${container.name}` : `docker stop ${container.name}`);
   };
 
   const removeContainer = (id) => {
@@ -175,6 +214,7 @@ export default function DockerVisualizer() {
       containers: n.containers.filter(cId => cId !== id)
     })));
     setContainers(containers.filter(c => c.id !== id));
+    recordCommand(`docker rm ${container.name}`);
   };
 
   // ============ VOLUME HANDLERS ============
@@ -192,6 +232,7 @@ export default function DockerVisualizer() {
       size: '0 MB'
     }]);
     setShowAddVolumeModal(false);
+    recordCommand(`docker volume create ${newVolume.name}`);
     setNewVolume({ name: '' });
   };
 
@@ -203,6 +244,7 @@ export default function DockerVisualizer() {
       return;
     }
     setVolumes(volumes.filter(v => v.id !== id));
+    recordCommand(`docker volume rm ${volume.name}`);
   };
 
   // ============ NETWORK HANDLERS ============
@@ -221,6 +263,7 @@ export default function DockerVisualizer() {
       containers: []
     }]);
     setShowAddNetworkModal(false);
+    recordCommand(`docker network create --driver ${newNetwork.driver} ${newNetwork.name}`);
     setNewNetwork({ name: '', driver: 'bridge' });
   };
 
@@ -235,6 +278,7 @@ export default function DockerVisualizer() {
       return;
     }
     setNetworks(networks.filter(n => n.id !== id));
+    recordCommand(`docker network rm ${network.name}`);
   };
 
   // ============ SCENARIOS ============
@@ -1205,6 +1249,74 @@ export default function DockerVisualizer() {
           </div>
         </div>
       )}
+
+      {/* CLI Commands Panel */}
+      <div className="fixed bottom-0 left-0 right-0 z-40">
+        <div className="max-w-6xl mx-auto px-6">
+          <div className={`bg-slate-900 border-t-2 border-x-2 border-slate-700 rounded-t-xl transition-all ${showCliPanel ? 'h-48' : 'h-10'}`}>
+            {/* Panel Header */}
+            <button
+              onClick={() => setShowCliPanel(!showCliPanel)}
+              className="w-full flex items-center justify-between px-4 py-2 hover:bg-slate-800/50 transition-colors rounded-t-xl"
+            >
+              <div className="flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-green-400" />
+                <span className="text-sm font-medium text-slate-300">Docker Commands</span>
+                <span className="text-xs text-slate-500">({commandHistory.length} commands)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {commandHistory.length > 0 && showCliPanel && (
+                  <span
+                    onClick={(e) => { e.stopPropagation(); clearHistory(); }}
+                    className="text-xs text-slate-500 hover:text-red-400 cursor-pointer"
+                  >
+                    Clear
+                  </span>
+                )}
+                {showCliPanel ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-slate-400" />}
+              </div>
+            </button>
+            
+            {/* Commands List */}
+            {showCliPanel && (
+              <div className="h-36 overflow-y-auto px-4 pb-3">
+                {commandHistory.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500 text-sm">
+                    <Terminal className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p>Perform actions to see equivalent Docker commands</p>
+                    <p className="text-xs mt-1">Pull an image, run a container, create a volume...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {commandHistory.map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-2 group">
+                        <span className="text-xs text-slate-600 w-16 flex-shrink-0">{item.timestamp}</span>
+                        <code className="flex-1 text-sm text-green-400 font-mono bg-slate-800 px-2 py-1 rounded truncate">
+                          $ {item.cmd}
+                        </code>
+                        <button
+                          onClick={() => copyCommand(item.cmd, idx)}
+                          className="p-1 opacity-0 group-hover:opacity-100 hover:bg-slate-700 rounded transition-all"
+                          title="Copy command"
+                        >
+                          {copiedIndex === idx ? (
+                            <Check className="w-3 h-3 text-green-400" />
+                          ) : (
+                            <Copy className="w-3 h-3 text-slate-400" />
+                          )}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom padding to account for CLI panel */}
+      <div className="h-12"></div>
     </div>
   );
 }
